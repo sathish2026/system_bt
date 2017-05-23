@@ -42,6 +42,13 @@ static const interop_addr_entry_t interop_addr_database[] = {
     {{{0xac, 0x9e, 0x17, 0, 0, 0}}, 3, INTEROP_DISABLE_LE_SECURE_CONNECTIONS},
     {{{0xf0, 0x79, 0x59, 0, 0, 0}}, 3, INTEROP_DISABLE_LE_SECURE_CONNECTIONS},
 
+    {{{0x08, 0x62, 0x66, 0, 0, 0}}, 3, INTEROP_HID_PREF_CONN_SUP_TIMEOUT_3S},
+    {{{0x38, 0x2c, 0x4a, 0xc9, 0, 0}}, 4, INTEROP_HID_PREF_CONN_SUP_TIMEOUT_3S},
+    {{{0x38, 0x2c, 0x4a, 0xe6, 0, 0}}, 4, INTEROP_HID_PREF_CONN_SUP_TIMEOUT_3S},
+    {{{0x54, 0xa0, 0x50, 0xd9, 0, 0}}, 4, INTEROP_HID_PREF_CONN_SUP_TIMEOUT_3S},
+    {{{0xac, 0x9e, 0x17, 0, 0, 0}}, 3, INTEROP_HID_PREF_CONN_SUP_TIMEOUT_3S},
+    {{{0xf0, 0x79, 0x59, 0, 0, 0}}, 3, INTEROP_HID_PREF_CONN_SUP_TIMEOUT_3S},
+
     // Ausdom M05 - unacceptably loud volume
     {{{0xa0, 0xe9, 0xdb, 0, 0, 0}}, 3, INTEROP_DISABLE_ABSOLUTE_VOLUME},
 
@@ -98,10 +105,29 @@ static const interop_addr_entry_t interop_addr_database[] = {
 
     // Unknown keyboard (carried over from auto_pair_devlist.conf)
     {{{0x00, 0x0F, 0xF6, 0, 0, 0}}, 3, INTEROP_KEYBOARD_REQUIRES_FIXED_PIN},
+
+    // Apple Magic Mouse - SDP No Resources Error
+    {{{0x04, 0x0C, 0xCE, 0, 0, 0}}, 3, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    // Bluetooth Laser Travel Mouse - SDP No Resources Error
+    {{{0x00, 0x07, 0x61, 0, 0, 0}}, 3, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    // Microsoft Bluetooth Notebook Mouse 5000 - SDP No Resources Error
+    {{{0x00, 0x1d, 0xd8, 0, 0, 0}}, 3, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    // Logitech MX Revolution Mouse - SDP No Resources Error
+    {{{0x00, 0x1f, 0x20, 0, 0, 0}}, 3, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    // Rapoo 6080 mouse - SDP No Resources Error
+    {{{0x6c, 0x5d, 0x63, 0, 0, 0}}, 3, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    // Microsoft Sculpt Touch Mouse - SDP No Resources Error
+    {{{0x28, 0x18, 0x78, 0, 0, 0}}, 3, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    // Tero's Game Controller
+    {{{0x60, 0x45, 0xBD, 0, 0, 0}}, 3, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    // Bluetooth Keyboard
+    {{{0x20, 0x4C, 0x10, 0, 0, 0}}, 3, INTEROP_DISABLE_SNIFF_DURING_SCO},
+    // Kinivo BTC-450 - volume is erratic when using Absolute Volume
+    {{{0x00, 0x18, 0x91, 0, 0, 0}}, 3, INTEROP_DISABLE_ABSOLUTE_VOLUME},
 };
 
 typedef struct {
-  char name[20];
+  char name[40];
   size_t length;
   interop_feature_t feature;
 } interop_name_entry_t;
@@ -118,4 +144,40 @@ static const interop_name_entry_t interop_name_database[] = {
 
     // Subaru car kits ("CAR M_MEDIA")
     {"CAR", 3, INTEROP_DISABLE_AUTO_PAIRING},
+
+    // Sends SDP No Resources Error
+    {"Apple Magic Mouse", 17, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    {"Bluetooth Laser Travel Mouse", 28, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    {"Microsoft Bluetooth Notebook Mouse 5000", 39,
+     INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    {"Logitech MX Revolution Mouse", 28, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    {"Microsoft Sculpt Touch Mouse", 28, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    {"Tero's Game Controller", 22, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+
+    // HID Moto KZ500 Keyboard - Problematic SDP digitizer descriptor
+    {"Motorola Keyboard KZ500", 23, INTEROP_REMOVE_HID_DIG_DESCRIPTOR},
+    {"Motorola Keyboard KZ500 v122", 28, INTEROP_REMOVE_HID_DIG_DESCRIPTOR},
+};
+
+typedef struct {
+  uint16_t manufacturer;
+  interop_feature_t feature;
+} interop_manufacturer_t;
+
+static const interop_manufacturer_t interop_manufacturer_database[] = {
+    // Apple Devices - SDP No Resources Error
+    {76, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+    // Apple Devices - Lags during SCO
+    {76, INTEROP_DISABLE_SNIFF_DURING_SCO},
+};
+
+typedef struct {
+  uint16_t vendor_id;
+  uint16_t product_id;
+  interop_feature_t feature;
+} interop_hid_multitouch_t;
+
+static const interop_hid_multitouch_t interop_hid_multitouch_database[] = {
+    // HID Moto KZ500 Keyboard - Problematic SDP digitizer descriptor
+    {0x22b8, 0x093d, INTEROP_REMOVE_HID_DIG_DESCRIPTOR},
 };

@@ -255,6 +255,16 @@ void BTA_GATTC_ServiceSearchRequest(uint16_t conn_id, tBT_UUID* p_srvc_uuid) {
   bta_sys_sendmsg(p_buf);
 }
 
+void BTA_GATTC_DiscoverServiceByUuid(uint16_t conn_id, tBT_UUID* p_srvc_uuid) {
+  tGATT_DISC_PARAM* param = new tGATT_DISC_PARAM;
+  param->s_handle = 0x0001;
+  param->e_handle = 0xFFFF;
+  param->service = *p_srvc_uuid;
+  do_in_bta_thread(FROM_HERE,
+                   base::Bind(base::IgnoreResult(&GATTC_Discover), conn_id,
+                              GATT_DISC_SRVC_BY_UUID, base::Owned(param)));
+}
+
 /*******************************************************************************
  *
  * Function         BTA_GATTC_GetServices
@@ -347,6 +357,30 @@ void BTA_GATTC_ReadCharacteristic(uint16_t conn_id, uint16_t handle,
   p_buf->hdr.layer_specific = conn_id;
   p_buf->auth_req = auth_req;
   p_buf->handle = handle;
+  p_buf->read_cb = callback;
+  p_buf->read_cb_data = cb_data;
+
+  bta_sys_sendmsg(p_buf);
+}
+
+/**
+ * This function is called to read a value of characteristic with uuid equal to
+ * |uuid|
+ */
+void BTA_GATTC_ReadUsingCharUuid(uint16_t conn_id, tBT_UUID uuid,
+                                 uint16_t s_handle, uint16_t e_handle,
+                                 tBTA_GATT_AUTH_REQ auth_req,
+                                 GATT_READ_OP_CB callback, void* cb_data) {
+  tBTA_GATTC_API_READ* p_buf =
+      (tBTA_GATTC_API_READ*)osi_calloc(sizeof(tBTA_GATTC_API_READ));
+
+  p_buf->hdr.event = BTA_GATTC_API_READ_EVT;
+  p_buf->hdr.layer_specific = conn_id;
+  p_buf->auth_req = auth_req;
+  p_buf->handle = 0;
+  p_buf->uuid = uuid;
+  p_buf->s_handle = s_handle;
+  p_buf->e_handle = e_handle;
   p_buf->read_cb = callback;
   p_buf->read_cb_data = cb_data;
 

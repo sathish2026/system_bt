@@ -693,6 +693,13 @@ extern void BTA_GATTC_Close(uint16_t conn_id);
 extern void BTA_GATTC_ServiceSearchRequest(uint16_t conn_id,
                                            tBT_UUID* p_srvc_uuid);
 
+/**
+ * This function is called to send "Find service by UUID" request. Used only for
+ * PTS tests.
+ */
+extern void BTA_GATTC_DiscoverServiceByUuid(uint16_t conn_id,
+                                            tBT_UUID* p_srvc_uuid);
+
 /*******************************************************************************
  *
  * Function         BTA_GATTC_GetServices
@@ -776,6 +783,15 @@ typedef void (*GATT_WRITE_OP_CB)(uint16_t conn_id, tGATT_STATUS status,
 void BTA_GATTC_ReadCharacteristic(uint16_t conn_id, uint16_t handle,
                                   tBTA_GATT_AUTH_REQ auth_req,
                                   GATT_READ_OP_CB callback, void* cb_data);
+
+/**
+ * This function is called to read a value of characteristic with uuid equal to
+ * |uuid|
+ */
+void BTA_GATTC_ReadUsingCharUuid(uint16_t conn_id, tBT_UUID uuid,
+                                 uint16_t s_handle, uint16_t e_handle,
+                                 tBTA_GATT_AUTH_REQ auth_req,
+                                 GATT_READ_OP_CB callback, void* cb_data);
 
 /*******************************************************************************
  *
