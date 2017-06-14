@@ -976,14 +976,17 @@ tBTM_STATUS btm_sec_bond_by_transport(BD_ADDR bd_addr, tBT_TRANSPORT transport,
   BTM_TRACE_DEBUG("before update sec_flags=0x%x", p_dev_rec->sec_flags);
 
   /* Finished if connection is active and already paired */
-  if (((p_dev_rec->hci_handle != BTM_SEC_INVALID_HANDLE) &&
+  if ((p_dev_rec->hci_handle != BTM_SEC_INVALID_HANDLE) &&
        transport == BT_TRANSPORT_BR_EDR &&
-       (p_dev_rec->sec_flags & BTM_SEC_AUTHENTICATED)) ||
-      ((p_dev_rec->ble_hci_handle != BTM_SEC_INVALID_HANDLE) &&
-       transport == BT_TRANSPORT_LE &&
-       (p_dev_rec->sec_flags & BTM_SEC_LE_AUTHENTICATED))) {
+       (p_dev_rec->sec_flags & BTM_SEC_AUTHENTICATED)) {
     BTM_TRACE_WARNING("BTM_SecBond -> Already Paired");
     return (BTM_SUCCESS);
+  }
+
+  if ((p_dev_rec->ble_hci_handle != BTM_SEC_INVALID_HANDLE) && transport == BT_TRANSPORT_LE
+       && (p_dev_rec->sec_flags & BTM_SEC_LE_AUTHENTICATED)) {
+    BTM_TRACE_WARNING("BTM_SecBond. Last Pairing still in progress. Wait!");
+    return (BTM_CMD_STARTED);
   }
 
   /* Tell controller to get rid of the link key if it has one stored */
@@ -4134,10 +4137,13 @@ void btm_sec_encrypt_change(uint16_t handle, uint8_t status,
     btm_sec_check_pending_enc_req(p_dev_rec, p_acl->transport, encr_enable);
 
   if (p_acl && p_acl->transport == BT_TRANSPORT_LE) {
-    if (status == HCI_ERR_KEY_MISSING || status == HCI_ERR_AUTH_FAILURE ||
+    if (status == HCI_ERR_AUTH_FAILURE ||
         status == HCI_ERR_ENCRY_MODE_NOT_ACCEPTABLE) {
       p_dev_rec->sec_flags &= ~(BTM_SEC_LE_LINK_KEY_KNOWN);
       p_dev_rec->ble.key_type = BTM_LE_KEY_NONE;
+    }
+    else if (status == HCI_ERR_KEY_MISSING) {
+        btm_sec_disconnect(handle, status);
     }
     btm_ble_link_encrypted(p_dev_rec->ble.pseudo_addr, encr_enable);
     return;
