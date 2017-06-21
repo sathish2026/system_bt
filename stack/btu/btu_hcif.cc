@@ -351,6 +351,9 @@ void btu_hcif_process_event(UNUSED_ATTR uint8_t controller_id, BT_HDR* p_msg) {
       btm_vendor_specific_evt(p, hci_evt_len);
       break;
   }
+#if HCI_RAW_CMD_INCLUDED == TRUE
+  btm_hci_event (p, hci_evt_code , hci_evt_len);
+#endif
 }
 
 /*******************************************************************************
@@ -1237,7 +1240,27 @@ static void btu_hcif_hardware_error_evt(uint8_t* p) {
   btm_report_device_status(BTM_DEV_STATUS_DOWN);
 
   /* Reset the controller */
-  if (BTM_IsDeviceUp()) BTM_DeviceReset(NULL);
+  if (BTM_IsDeviceUp()) BTM_HCI_Reset();
+
+  if(*p == 0x0f || (*p == 0x0a))
+  {
+/*   HCI_TRACE_ERROR("Ctlr H/w error event - code:Tigger SSR");
+     bte_ssr_cleanup(0x33);//SSR reason 0x33 = HW ERR EVT */
+     usleep(20000); /* 20 milliseconds */
+     //Reset SOC status to trigger hciattach service
+/*   if(osi_property_set("bluetooth.status", "off") < 0)
+     {
+        ALOGE("SSR: Error resetting SOC status\n ");
+     }
+     else
+     {
+        ALOGE("SSR: SOC Status is reset\n ");
+     }*/
+#if (!defined(SSR_CLEANUP) || (defined(SSR_CLEANUP) && SSR_CLEANUP == FALSE))
+     /* Killing the process to force a restart as part of fault tolerance */
+     kill(getpid(), SIGKILL);
+#endif
+    }
 }
 
 /*******************************************************************************
@@ -1268,7 +1291,7 @@ static void btu_hcif_role_change_evt(uint8_t* p) {
   STREAM_TO_UINT8(status, p);
   STREAM_TO_BDADDR(bda, p);
   STREAM_TO_UINT8(role, p);
-
+  btm_blacklist_role_change_device(bda, status);
   l2c_link_role_changed(bda, role, status);
   btm_acl_role_changed(status, bda, role);
 }

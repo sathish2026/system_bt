@@ -485,6 +485,10 @@ extern void btsnd_hcic_delete_stored_key(BD_ADDR bd_addr, bool delete_all_flag);
 #define HCI_DELETE_KEY_ALL_FLAG_OFF 6
 /* Delete Stored Key */
 
+extern void btsnd_hcic_reset(uint8_t local_controller_id); /* Reset */
+
+#define HCIC_PARAM_SIZE_RESET 0 /* Reset */
+
 /* Change Local Name */
 extern void btsnd_hcic_change_name(BD_NAME name);
 
@@ -644,6 +648,8 @@ extern void btsnd_hcic_enhanced_accept_synchronous_connection(
 #define HCID_HEADER_SIZE 4
 
 #define HCID_GET_SCO_LEN(p) (*((uint8_t*)((p) + 1) + (p)->offset + 2))
+extern void btsnd_hcic_raw_cmd (void *buffer, uint16_t opcode, uint8_t len,
+                                 uint8_t *p_data, void *p_cmd_cplt_cback);
 
 extern void btsnd_hcic_vendor_spec_cmd(void* buffer, uint16_t opcode,
                                        uint8_t len, uint8_t* p_data,

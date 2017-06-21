@@ -167,7 +167,7 @@ uint16_t GAP_ConnOpen(const char* p_serv_name, uint8_t service_id,
   if (p_cfg) p_ccb->cfg = *p_cfg;
 
   /* Configure L2CAP COC, if transport is LE */
-  if (transport == BT_TRANSPORT_LE) {
+  if (p_cfg && transport == BT_TRANSPORT_LE) {
     p_ccb->local_coc_cfg.credits = L2CAP_LE_DEFAULT_CREDIT;
     p_ccb->local_coc_cfg.mtu = p_cfg->mtu;
     p_ccb->local_coc_cfg.mps = L2CAP_LE_DEFAULT_MPS;
@@ -641,7 +641,7 @@ uint16_t GAP_ConnGetL2CAPCid(uint16_t gap_handle) {
 
 /*******************************************************************************
  *
- * Function         gap_tx_connect_ind
+** Function         gap_tx_complete_ind
  *
  * Description      Sends out GAP_EVT_TX_EMPTY when transmission has been
  *                  completed.
@@ -656,6 +656,11 @@ void gap_tx_complete_ind(uint16_t l2cap_cid, uint16_t sdu_sent) {
   if ((p_ccb->con_state == GAP_CCB_STATE_CONNECTED) && (sdu_sent == 0xFFFF)) {
     GAP_TRACE_EVENT("%s: GAP_EVT_TX_EMPTY", __func__);
     p_ccb->p_callback(p_ccb->gap_handle, GAP_EVT_TX_EMPTY);
+  }
+  else if ((p_ccb->con_state == GAP_CCB_STATE_CONNECTED) && (sdu_sent >= 1))
+  {
+    GAP_TRACE_EVENT("%s: GAP_EVT_TX_DONE", __func__);
+    p_ccb->p_callback (p_ccb->gap_handle, GAP_EVT_TX_DONE);
   }
 }
 

@@ -651,6 +651,19 @@ void btsnd_hcic_write_def_policy_set(uint16_t settings) {
   btu_hcif_send_cmd(LOCAL_BR_EDR_CONTROLLER_ID, p);
 }
 
+void btsnd_hcic_reset (uint8_t local_controller_id) {
+  BT_HDR *p = (BT_HDR *)osi_malloc(HCI_CMD_BUF_SIZE);
+  uint8_t *pp = (uint8_t *)(p + 1);
+
+  p->len    = HCIC_PREAMBLE_SIZE + HCIC_PARAM_SIZE_RESET;
+  p->offset = 0;
+
+  UINT16_TO_STREAM (pp, HCI_RESET);
+  UINT8_TO_STREAM (pp, HCIC_PARAM_SIZE_RESET);
+
+  btu_hcif_send_cmd (local_controller_id,  p);
+}
+
 void btsnd_hcic_set_event_filter(uint8_t filt_type, uint8_t filt_cond_type,
                                  uint8_t* filt_cond, uint8_t filt_cond_len) {
   BT_HDR* p = (BT_HDR*)osi_malloc(HCI_CMD_BUF_SIZE);
@@ -1368,6 +1381,24 @@ void btsnd_hcic_write_pagescan_type(uint8_t type) {
 #error "HCI_CMD_BUF_SIZE must be larger than 268"
 #endif
 
+void btsnd_hcic_raw_cmd (void *buffer, uint16_t opcode, uint8_t len,
+                                 uint8_t *p_data, void *p_cmd_cplt_cback)
+{
+  BT_HDR *p = (BT_HDR *)buffer;
+  uint8_t *pp = (uint8_t *)(p + 1);
+
+  p->len    = HCIC_PREAMBLE_SIZE + len;
+  p->offset = sizeof(void *);
+
+  *((void **)pp) = p_cmd_cplt_cback; /* Store command complete callback in buffer */
+  pp += sizeof(void *); /* Skip over callback pointer */
+
+  UINT16_TO_STREAM (pp, opcode);
+  UINT8_TO_STREAM  (pp, len);
+  ARRAY_TO_STREAM  (pp, p_data, len);
+
+  btu_hcif_send_cmd (LOCAL_BR_EDR_CONTROLLER_ID,  p);
+}
 void btsnd_hcic_vendor_spec_cmd(void* buffer, uint16_t opcode, uint8_t len,
                                 uint8_t* p_data, void* p_cmd_cplt_cback) {
   BT_HDR* p = (BT_HDR*)buffer;

@@ -1,4 +1,8 @@
 /******************************************************************************
+ * Copyright (C) 2017, The Linux Foundation. All rights reserved.
+ * Not a Contribution.
+ ******************************************************************************/
+/******************************************************************************
  *
  *  Copyright (C) 2009-2012 Broadcom Corporation
  *
@@ -71,6 +75,8 @@
 /******************************************************************************
  *  Constants & Macros
  *****************************************************************************/
+#define BTIF_DM_GET_REMOTE_PROP(b,t,v,l,p) \
+      {p.type=t;p.val=v;p.len=l;btif_storage_get_remote_device_property(b,&p);}
 
 #define COD_MASK 0x07FF
 
@@ -214,6 +220,8 @@ static size_t btif_events_end_index = 0;
  *****************************************************************************/
 static btif_dm_pairing_cb_t pairing_cb;
 static btif_dm_oob_cb_t oob_cb;
+static uint16_t num_active_br_edr_links;
+static uint16_t num_active_le_links;
 static void btif_dm_generic_evt(uint16_t event, char* p_param);
 static void btif_dm_cb_create_bond(bt_bdaddr_t* bd_addr,
                                    tBTA_TRANSPORT transport);
@@ -252,6 +260,8 @@ extern void bta_gatt_convert_uuid16_to_uuid128(uint8_t uuid_128[LEN_UUID_128],
                                                uint16_t uuid_16);
 extern void btif_av_move_idle(bt_bdaddr_t bd_addr);
 extern bt_status_t btif_hd_execute_service(bool b_enable);
+extern void btif_av_trigger_suspend();
+extern bool btif_av_get_ongoing_multicast();
 
 /******************************************************************************
  *  Functions
@@ -330,7 +340,36 @@ bt_status_t btif_in_execute_service_request(tBTA_SERVICE_ID service_id,
 }
 
 /*******************************************************************************
- *
+**
+** Function         check_eir_is_remote_name_short
+**
+** Description      Check if remote name is shortened
+**
+** Returns          TRUE if remote name found
+**                  else FALSE
+**
+*******************************************************************************/
+static bool check_eir_is_remote_name_short(tBTA_DM_SEARCH *p_search_data) {
+
+  const uint8_t* p_eir_remote_name = NULL;
+  uint8_t remote_name_len = 0;
+
+  /* Check EIR for remote name and services */
+  if (p_search_data->inq_res.p_eir) {
+
+    p_eir_remote_name = AdvertiseDataParser::GetFieldByType(
+          p_search_data->inq_res.p_eir, p_search_data->inq_res.eir_len,
+          BTM_EIR_SHORTENED_LOCAL_NAME_TYPE, &remote_name_len);
+
+    if (p_eir_remote_name) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/*******************************************************************************
+**
  * Function         check_eir_remote_name
  *
  * Description      Check if remote name is in the EIR data
@@ -539,8 +578,14 @@ static void bond_state_changed(bt_status_t status, bt_bdaddr_t* bd_addr,
   if (state == BT_BOND_STATE_BONDING) {
     pairing_cb.state = state;
     bdcpy(pairing_cb.bd_addr, bd_addr->address);
-  } else {
-    if (!pairing_cb.sdp_attempts)
+  } else if ((state == BT_BOND_STATE_NONE)&&
+      ((bdcmp(bd_addr->address, pairing_cb.bd_addr) == 0) ||
+      (bdcmp(bd_addr->address, pairing_cb.static_bdaddr.address) == 0))) {
+     memset(&pairing_cb, 0, sizeof(pairing_cb));
+  }else{
+    if ((!pairing_cb.sdp_attempts)&&
+          ((bdcmp(bd_addr->address, pairing_cb.bd_addr) == 0) ||
+          (bdcmp(bd_addr->address, pairing_cb.static_bdaddr.address) == 0)))
       memset(&pairing_cb, 0, sizeof(pairing_cb));
     else
       BTIF_TRACE_DEBUG("%s: BR-EDR service discovery active", __func__);
@@ -744,6 +789,21 @@ static void btif_dm_cb_create_bond(bt_bdaddr_t* bd_addr,
  *
  ******************************************************************************/
 void btif_dm_cb_remove_bond(bt_bdaddr_t* bd_addr) {
+
+  bt_bdname_t alias;
+  bt_property_t properties[1];
+  uint32_t num_properties = 0;
+  memset(&alias, 0, sizeof(alias));
+  BTIF_DM_GET_REMOTE_PROP(bd_addr, BT_PROPERTY_REMOTE_FRIENDLY_NAME,
+          &alias, sizeof(alias), properties[num_properties]);
+
+  if(alias.name[0] != '\0') {
+       properties[0].type = BT_PROPERTY_REMOTE_FRIENDLY_NAME;
+       properties[0].val = (void *) "";
+       properties[0].len = 1;
+
+       btif_storage_set_remote_device_property(bd_addr, &properties[0]);
+  }
 /*special handling for HID devices */
 /*  VUP needs to be sent if its a HID Device. The HID HOST module will check if
 there
@@ -883,6 +943,12 @@ static void btif_dm_pin_req_evt(tBTA_DM_PIN_REQ* p_pin_req) {
   bdcpy(bd_addr.address, p_pin_req->bd_addr);
   memcpy(bd_name.name, p_pin_req->bd_name, BD_NAME_LEN);
 
+  if (pairing_cb.state == BT_BOND_STATE_BONDING &&
+        bdcmp(bd_addr.address, pairing_cb.bd_addr) != 0) {
+      BTIF_TRACE_WARNING("%s(): already in bonding state, reject request", __FUNCTION__);
+      btif_dm_pin_reply(&bd_addr, 0, 0, NULL);
+      return;
+  }
   bond_state_changed(BT_STATUS_SUCCESS, &bd_addr, BT_BOND_STATE_BONDING);
 
   cod = devclass2uint(p_pin_req->dev_class);
@@ -895,6 +961,13 @@ static void btif_dm_pin_req_evt(tBTA_DM_PIN_REQ* p_pin_req) {
   /* check for auto pair possiblity only if bond was initiated by local device
    */
   if (pairing_cb.is_local_initiated && (p_pin_req->min_16_digit == false)) {
+    if (bdcmp(pairing_cb.bd_addr, bd_addr.address))
+      {
+        /* Pin code from different device reject it as we dont support more than 1 pairing */
+        BTIF_TRACE_DEBUG("%s()rejecting pairing request", __FUNCTION__);
+        BTA_DmPinReply( (uint8_t*)bd_addr.address, FALSE, 0, NULL);
+        return;
+      }
     if (check_cod(&bd_addr, COD_AV_HEADSETS) ||
         check_cod(&bd_addr, COD_AV_HEADPHONES) ||
         check_cod(&bd_addr, COD_AV_PORTABLE_AUDIO) ||
@@ -965,10 +1038,19 @@ static void btif_dm_ssp_cfm_req_evt(tBTA_DM_SP_CFM_REQ* p_ssp_cfm_req) {
   bdcpy(bd_addr.address, p_ssp_cfm_req->bd_addr);
   memcpy(bd_name.name, p_ssp_cfm_req->bd_name, BD_NAME_LEN);
 
+  if (pairing_cb.state == BT_BOND_STATE_BONDING &&
+        bdcmp(bd_addr.address, pairing_cb.bd_addr) != 0) {
+     BTIF_TRACE_WARNING("%s(): already in bonding state, reject request", __FUNCTION__);
+     btif_dm_ssp_reply(&bd_addr, BT_SSP_VARIANT_PASSKEY_CONFIRMATION, 0, 0);
+     return;
+  }
   /* Set the pairing_cb based on the local & remote authentication requirements
    */
   bond_state_changed(BT_STATUS_SUCCESS, &bd_addr, BT_BOND_STATE_BONDING);
 
+  BTIF_TRACE_EVENT("%s: just_works :%d, loc_auth_req =%d, rmt_auth_req =%d ",
+      __FUNCTION__,p_ssp_cfm_req->just_works,p_ssp_cfm_req->loc_auth_req,
+      p_ssp_cfm_req->rmt_auth_req);
   /* if just_works and bonding bit is not set treat this as temporary */
   if (p_ssp_cfm_req->just_works &&
       !(p_ssp_cfm_req->loc_auth_req & BTM_AUTH_BONDS) &&
@@ -997,7 +1079,18 @@ static void btif_dm_ssp_cfm_req_evt(tBTA_DM_SP_CFM_REQ* p_ssp_cfm_req) {
           "%s: User consent needed for incoming pairing request. loc_io_caps: "
           "%d, rmt_io_caps: %d",
           __func__, p_ssp_cfm_req->loc_io_caps, p_ssp_cfm_req->rmt_io_caps);
-    } else {
+      /* Errata:4348
+       * Pairing confirmation for JustWorks needed if:
+       * 1. Outgoing (non-temporary) pairing is detected AND
+       * 2. local IO capabilities are DisplayYesNo AND
+       * 3. remote IO capbiltiies are NoInputNoOutput
+      */
+      } else if (!is_incoming && pairing_cb.bond_type != BOND_TYPE_TEMPORARY &&
+                (p_ssp_cfm_req->loc_io_caps == HCI_IO_CAP_DISPLAY_YESNO) &&
+                (p_ssp_cfm_req->rmt_io_caps == HCI_IO_CAP_NO_IO)) {
+        BTIF_TRACE_EVENT("%s: Show pairing pop up for outgoing pairing when loc_io_caps: %d,"
+             "rmt_io_caps: %d", __FUNCTION__, p_ssp_cfm_req->loc_io_caps, p_ssp_cfm_req->rmt_io_caps);
+      } else {
       BTIF_TRACE_EVENT("%s: Auto-accept JustWorks pairing", __func__);
       btif_dm_ssp_reply(&bd_addr, BT_SSP_VARIANT_CONSENT, true, 0);
       return;
@@ -1145,9 +1238,6 @@ static void btif_dm_auth_cmpl_evt(tBTA_DM_AUTH_CMPL* p_auth_cmpl) {
       status = BT_STATUS_SUCCESS;
       state = BT_BOND_STATE_BONDED;
 
-      /* Trigger SDP on the device */
-      pairing_cb.sdp_attempts = 1;
-
       bool is_crosskey = false;
       /* If bonded due to cross-key, save the static address too*/
       if (pairing_cb.state == BT_BOND_STATE_BONDING &&
@@ -1175,8 +1265,9 @@ static void btif_dm_auth_cmpl_evt(tBTA_DM_AUTH_CMPL* p_auth_cmpl) {
     switch (p_auth_cmpl->fail_reason) {
       case HCI_ERR_PAGE_TIMEOUT:
       case HCI_ERR_LMP_RESPONSE_TIMEOUT:
-        if (interop_match_addr(INTEROP_AUTO_RETRY_PAIRING, &bd_addr) &&
-            pairing_cb.timeout_retries) {
+        if ((pairing_cb.timeout_retries == NUM_TIMEOUT_RETRIES) ||
+           (interop_match_addr(INTEROP_AUTO_RETRY_PAIRING, &bd_addr) &&
+            pairing_cb.timeout_retries)) {
           BTIF_TRACE_WARNING("%s() - Pairing timeout; retrying (%d) ...",
                              __func__, pairing_cb.timeout_retries);
           --pairing_cb.timeout_retries;
@@ -1193,9 +1284,13 @@ static void btif_dm_auth_cmpl_evt(tBTA_DM_AUTH_CMPL* p_auth_cmpl) {
         status = BT_STATUS_AUTH_REJECTED;
         break;
 
+      /* Dont fail the bonding for key missing error as stack retry security */
+      case HCI_ERR_KEY_MISSING:
+        btif_storage_remove_bonded_device(&bd_addr);
+        return;
+
       /* map the auth failure codes, so we can retry pairing if necessary */
       case HCI_ERR_AUTH_FAILURE:
-      case HCI_ERR_KEY_MISSING:
         btif_storage_remove_bonded_device(&bd_addr);
       case HCI_ERR_HOST_REJECT_SECURITY:
       case HCI_ERR_ENCRY_MODE_NOT_ACCEPTABLE:
@@ -1204,17 +1299,18 @@ static void btif_dm_auth_cmpl_evt(tBTA_DM_AUTH_CMPL* p_auth_cmpl) {
       case HCI_ERR_INSUFFCIENT_SECURITY:
       case HCI_ERR_PEER_USER:
       case HCI_ERR_UNSPECIFIED:
-        BTIF_TRACE_DEBUG(" %s() Authentication fail reason %d", __func__,
-                         p_auth_cmpl->fail_reason);
-        if (pairing_cb.autopair_attempts == 1) {
+      case HCI_ERR_REPEATED_ATTEMPTS:
+        BTIF_TRACE_DEBUG(" %s() Authentication fail reason %d",
+                __FUNCTION__, p_auth_cmpl->fail_reason);
+        if (pairing_cb.autopair_attempts  == 1) {
           /* Create the Bond once again */
-          BTIF_TRACE_WARNING("%s() auto pair failed. Reinitiate Bond",
-                             __func__);
-          btif_dm_cb_create_bond(&bd_addr, BTA_TRANSPORT_UNKNOWN);
+          BTIF_TRACE_WARNING("%s() auto pair failed. Reinitiate Bond", __FUNCTION__);
+          btif_dm_cb_create_bond (&bd_addr, BTA_TRANSPORT_UNKNOWN);
           return;
         } else {
+
           /* if autopair attempts are more than 1, or not attempted */
-          status = BT_STATUS_AUTH_FAILURE;
+          status =  BT_STATUS_AUTH_FAILURE;
         }
         break;
 
@@ -1312,6 +1408,10 @@ static void btif_dm_search_devices_evt(uint16_t event, char* p_param) {
         uint32_t num_properties = 0;
         bt_status_t status;
         int addr_type = 0;
+        bt_bdname_t alias;
+        memset(&alias, 0, sizeof(alias));
+        BTIF_DM_GET_REMOTE_PROP(&bdaddr, BT_PROPERTY_REMOTE_FRIENDLY_NAME,
+                      &alias, sizeof(alias), properties[num_properties]);
 
         memset(properties, 0, sizeof(properties));
         /* BD_ADDR */
@@ -1320,11 +1420,22 @@ static void btif_dm_search_devices_evt(uint16_t event, char* p_param) {
         num_properties++;
         /* BD_NAME */
         /* Don't send BDNAME if it is empty */
-        if (bdname.name[0]) {
+        /* send alias name as the name if alias name present */
+        if (alias.name[0] != '\0') {
           BTIF_STORAGE_FILL_PROPERTY(&properties[num_properties],
-                                     BT_PROPERTY_BDNAME,
-                                     strlen((char*)bdname.name), &bdname);
+                                       BT_PROPERTY_BDNAME,
+                                       strlen((char *)alias.name), &alias);
           num_properties++;
+        } else if (bdname.name[0]) {
+          if((check_eir_is_remote_name_short(p_search_data) == TRUE) &&
+               (btif_storage_is_device_bonded(&bdaddr) == BT_STATUS_SUCCESS)) {
+            BTIF_TRACE_DEBUG("%s Don't update about the device name ", __FUNCTION__);
+          } else {
+            BTIF_STORAGE_FILL_PROPERTY(&properties[num_properties],
+                                          BT_PROPERTY_BDNAME,
+                                       strlen((char *)bdname.name), &bdname);
+            num_properties++;
+          }
         }
 
         /* DEV_CLASS */
@@ -1420,8 +1531,9 @@ static void btif_dm_search_services_evt(uint16_t event, char* p_param) {
   BTIF_TRACE_EVENT("%s:  event = %d", __func__, event);
   switch (event) {
     case BTA_DM_DISC_RES_EVT: {
-      bt_property_t prop;
       uint32_t i = 0;
+      bt_property_t prop[2];
+      int num_properties = 0;
       bt_bdaddr_t bd_addr;
       bt_status_t ret;
 
@@ -1438,12 +1550,12 @@ static void btif_dm_search_services_evt(uint16_t event, char* p_param) {
         btif_dm_get_remote_services(&bd_addr);
         return;
       }
-      prop.type = BT_PROPERTY_UUIDS;
-      prop.len = 0;
+      prop[0].type = BT_PROPERTY_UUIDS;
+      prop[0].len = 0;
       if ((p_data->disc_res.result == BTA_SUCCESS) &&
           (p_data->disc_res.num_uuids > 0)) {
-        prop.val = p_data->disc_res.p_uuid_list;
-        prop.len = p_data->disc_res.num_uuids * MAX_UUID_SIZE;
+        prop[0].val = p_data->disc_res.p_uuid_list;
+        prop[0].len = p_data->disc_res.num_uuids * MAX_UUID_SIZE;
         for (i = 0; i < p_data->disc_res.num_uuids; i++) {
           char temp[256];
           uuid_to_string_legacy(
@@ -1478,12 +1590,27 @@ static void btif_dm_search_services_evt(uint16_t event, char* p_param) {
 
       if (p_data->disc_res.num_uuids != 0) {
         /* Also write this to the NVRAM */
-        ret = btif_storage_set_remote_device_property(&bd_addr, &prop);
+        ret = btif_storage_set_remote_device_property(&bd_addr, &prop[0]);
         ASSERTC(ret == BT_STATUS_SUCCESS, "storing remote services failed",
                 ret);
+        num_properties++;
+      }
+
+      /* Remote name update */
+      if (strlen((const char *) p_data->disc_res.bd_name)) {
+        prop[1].type = BT_PROPERTY_BDNAME;
+        prop[1].val = p_data->disc_res.bd_name;
+        prop[1].len = strlen((char *)p_data->disc_res.bd_name);
+
+        ret = btif_storage_set_remote_device_property(&bd_addr, &prop[1]);
+        ASSERTC(ret == BT_STATUS_SUCCESS, "failed to save remote device property", ret);
+        num_properties++;
+      }
+
+      if(num_properties > 0) {
         /* Send the event to the BTIF */
         HAL_CBACK(bt_hal_cbacks, remote_device_properties_cb, BT_STATUS_SUCCESS,
-                  &bd_addr, 1, &prop);
+                  &bd_addr, num_properties, prop);
       }
     } break;
 
@@ -1625,7 +1752,7 @@ static void btif_dm_upstreams_evt(uint16_t event, char* p_param) {
       bt_status_t status;
       bt_property_t prop;
       prop.type = BT_PROPERTY_BDNAME;
-      prop.len = BD_NAME_LEN;
+      prop.len = BD_NAME_LEN + 1;
       prop.val = (void*)bdname;
 
       status = btif_storage_get_adapter_property(&prop);
@@ -1667,11 +1794,9 @@ static void btif_dm_upstreams_evt(uint16_t event, char* p_param) {
       /* for each of the enabled services in the mask, trigger the profile
        * disable */
       service_mask = btif_get_enabled_services_mask();
-      for (i = 0; i <= BTA_MAX_SERVICE_ID; i++) {
-        if (service_mask &
-            (tBTA_SERVICE_MASK)(BTA_SERVICE_ID_TO_SERVICE_MASK(i))) {
-          btif_in_execute_service_request(i, false);
-        }
+      if (service_mask &
+          (tBTA_SERVICE_MASK)(BTA_SERVICE_ID_TO_SERVICE_MASK(BTA_BLE_SERVICE_ID))) {
+        btif_in_execute_service_request(BTA_BLE_SERVICE_ID, FALSE);
       }
       btif_disable_bluetooth_evt();
       break;
@@ -1690,6 +1815,7 @@ static void btif_dm_upstreams_evt(uint16_t event, char* p_param) {
         btm_set_bond_type_dev(pairing_cb.bd_addr, BOND_TYPE_UNKNOWN);
         bond_state_changed((bt_status_t)p_data->bond_cancel_cmpl.result,
                            &bd_addr, BT_BOND_STATE_NONE);
+		btif_dm_remove_bond(&bd_addr);
       }
       break;
 
@@ -1735,6 +1861,27 @@ static void btif_dm_upstreams_evt(uint16_t event, char* p_param) {
       bdcpy(bd_addr.address, p_data->link_up.bd_addr);
       BTIF_TRACE_DEBUG("BTA_DM_LINK_UP_EVT. Sending BT_ACL_STATE_CONNECTED");
 
+      if (p_data->link_up.link_type == BT_TRANSPORT_LE) {
+        num_active_le_links++;
+        BTIF_TRACE_DEBUG("num_active_le_links is %d ", num_active_le_links);
+      }
+
+      if (p_data->link_up.link_type == BT_TRANSPORT_BR_EDR) {
+        num_active_br_edr_links++;
+        BTIF_TRACE_DEBUG("num_active_br_edr_links is %d ", num_active_br_edr_links);
+      }
+      /* When tuchtones are enabled and 2 EDR HS are connected, if new
+       * connection is initated, then tuch tones are send to both connected HS
+       * over A2dp.Stream will be suspended after 3 secs and if remote has
+       * initiated play in this duartion, multicast must not be enabled with
+       * 3 ACL's, hence trigger a2dp suspend.
+       * During active muisc streaming no new connection can happen, hence
+       * We will get this only when multistreaming is happening due to tuchtones
+       */
+      if (btif_av_get_ongoing_multicast()) {
+        // trigger a2dp suspend
+        btif_av_trigger_suspend();
+      }
       btif_update_remote_version_property(&bd_addr);
 
       HAL_CBACK(bt_hal_cbacks, acl_state_changed_cb, BT_STATUS_SUCCESS,
@@ -1744,6 +1891,19 @@ static void btif_dm_upstreams_evt(uint16_t event, char* p_param) {
     case BTA_DM_LINK_DOWN_EVT:
       bdcpy(bd_addr.address, p_data->link_down.bd_addr);
       btm_set_bond_type_dev(p_data->link_down.bd_addr, BOND_TYPE_UNKNOWN);
+
+      BTIF_TRACE_DEBUG("BTA_DM_LINK_DOWN_EVT. Sending BT_ACL_STATE_DISCONNECTED");
+      if (num_active_le_links > 0 &&
+          p_data->link_down.link_type == BT_TRANSPORT_LE) {
+        num_active_le_links--;
+        BTIF_TRACE_DEBUG("num_active_le_links is %d ",num_active_le_links);
+      }
+
+      if (num_active_br_edr_links > 0 &&
+          p_data->link_down.link_type == BT_TRANSPORT_BR_EDR) {
+        num_active_br_edr_links--;
+        BTIF_TRACE_DEBUG("num_active_br_edr_links is %d ",num_active_br_edr_links);
+      }
       btif_av_move_idle(bd_addr);
       BTIF_TRACE_DEBUG(
           "BTA_DM_LINK_DOWN_EVT. Sending BT_ACL_STATE_DISCONNECTED");
@@ -2058,11 +2218,11 @@ static void bte_search_devices_evt(tBTA_DM_SEARCH_EVT event,
    * to the end of the tBTA_DM_SEARCH */
   switch (event) {
     case BTA_DM_INQ_RES_EVT: {
-      if (p_data->inq_res.p_eir) param_len += HCI_EXT_INQ_RESPONSE_LEN;
+      if (p_data && p_data->inq_res.p_eir) param_len += HCI_EXT_INQ_RESPONSE_LEN;
     } break;
 
     case BTA_DM_DISC_RES_EVT: {
-      if (p_data->disc_res.raw_data_size && p_data->disc_res.p_raw_data)
+      if (p_data && p_data->disc_res.raw_data_size && p_data->disc_res.p_raw_data)
         param_len += p_data->disc_res.raw_data_size;
     } break;
   }
@@ -2071,7 +2231,7 @@ static void bte_search_devices_evt(tBTA_DM_SEARCH_EVT event,
 
   /* if remote name is available in EIR, set teh flag so that stack doesnt
    * trigger RNR */
-  if (event == BTA_DM_INQ_RES_EVT)
+  if (p_data && event == BTA_DM_INQ_RES_EVT)
     p_data->inq_res.remt_name_not_required =
         check_eir_remote_name(p_data, NULL, NULL);
 
@@ -2096,7 +2256,7 @@ static void bte_dm_search_services_evt(tBTA_DM_SEARCH_EVT event,
   if (p_data) param_len += sizeof(tBTA_DM_SEARCH);
   switch (event) {
     case BTA_DM_DISC_RES_EVT: {
-      if ((p_data->disc_res.result == BTA_SUCCESS) &&
+      if ((p_data && p_data->disc_res.result == BTA_SUCCESS) &&
           (p_data->disc_res.num_uuids > 0)) {
         param_len += (p_data->disc_res.num_uuids * MAX_UUID_SIZE);
       }
@@ -2192,7 +2352,11 @@ bt_status_t btif_dm_start_discovery(void) {
   tBTA_DM_INQ inq_params;
   tBTA_SERVICE_MASK services = 0;
 
-  BTIF_TRACE_EVENT("%s", __func__);
+  BTIF_TRACE_EVENT("%s : pairing_cb.state: 0x%x", __FUNCTION__, pairing_cb.state);
+
+  /* We should not go for inquiry in BONDING STATE. */
+  if (pairing_cb.state == BT_BOND_STATE_BONDING)
+      return BT_STATUS_BUSY;
 
   /* Cleanup anything remaining on index 0 */
   do_in_bta_thread(
@@ -2531,8 +2695,12 @@ bt_status_t btif_dm_get_adapter_property(bt_property_t* prop) {
  *
  ******************************************************************************/
 bt_status_t btif_dm_get_remote_services(bt_bdaddr_t* remote_addr) {
-  bdstr_t bdstr;
+  bdstr_t bdstr = {'\0'};
 
+  if (bdaddr_is_empty(remote_addr)) {
+    BTIF_TRACE_WARNING("%s: remote_addr is null", __FUNCTION__);
+    return BT_STATUS_FAIL;
+  }
   BTIF_TRACE_EVENT("%s: remote_addr=%s", __func__,
                    bdaddr_to_string(remote_addr, bdstr, sizeof(bdstr)));
 
@@ -3279,6 +3447,10 @@ bt_status_t btif_le_test_mode(uint16_t opcode, uint8_t* buf, uint8_t len) {
 }
 
 void btif_dm_on_disable() {
+  /* Cleanup static variables.*/
+  num_active_br_edr_links = 0;
+  num_active_le_links = 0;
+
   /* cancel any pending pairing requests */
   if (pairing_cb.state == BT_BOND_STATE_BONDING) {
     bt_bdaddr_t bd_addr;
@@ -3373,11 +3545,13 @@ void btif_debug_bond_event_dump(int fd) {
     btif_bond_event_t* event = &btif_dm_bond_events[i];
 
     char eventtime[20];
-    char temptime[20];
+    char temptime[20] = {0};
     struct tm* tstamp = localtime(&event->timestamp.tv_sec);
-    strftime(temptime, sizeof(temptime), "%H:%M:%S", tstamp);
-    snprintf(eventtime, sizeof(eventtime), "%s.%03ld", temptime,
-             event->timestamp.tv_nsec / 1000000);
+    if (tstamp) {
+      strftime(temptime, sizeof(temptime), "%H:%M:%S", tstamp);
+      snprintf(eventtime, sizeof(eventtime), "%s.%03ld", temptime,
+              event->timestamp.tv_nsec / 1000000);
+    }
 
     char bdaddr[18];
     bdaddr_to_string(&event->bd_addr, bdaddr, sizeof(bdaddr));
@@ -3415,4 +3589,32 @@ void btif_debug_bond_event_dump(int fd) {
     }
     dprintf(fd, "  %s  %s  %s  %s\n", eventtime, bdaddr, func_name, bond_state);
   }
+}
+
+/*******************************************************************************
+ *
+ * Function        btif_dm_get_br_edr_links.
+ *
+ * Description     Returns number of active BR/EDR links.
+ *
+ * Returns         UINT16
+ *
+ ******************************************************************************/
+uint16_t btif_dm_get_br_edr_links() {
+    BTIF_TRACE_DEBUG("BR/EDR Link count: %d", num_active_br_edr_links);
+    return num_active_br_edr_links;
+}
+
+/*******************************************************************************
+ *
+ * Function        btif_dm_get_le_links.
+ *
+ * Description     Returns number of active  LE links.
+ *
+ * Returns         UINT16
+ *
+ ******************************************************************************/
+uint16_t btif_dm_get_le_links() {
+    BTIF_TRACE_DEBUG("LE Link count: %d", num_active_le_links);
+    return num_active_le_links;
 }

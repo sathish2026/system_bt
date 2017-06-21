@@ -42,11 +42,13 @@
 #include "l2c_int.h"
 #include "l2cdefs.h"
 #include "osi/include/osi.h"
+#include "device/include/interop_config.h"
 
 extern fixed_queue_t* btu_general_alarm_queue;
 
 static bool l2c_link_send_to_lower(tL2C_LCB* p_lcb, BT_HDR* p_buf);
 
+#define HI_PRI_LINK_QUOTA 2 //Mininum ACL buffer quota for high priority link
 /*******************************************************************************
  *
  * Function         l2c_link_hci_conn_req
@@ -62,6 +64,7 @@ bool l2c_link_hci_conn_req(BD_ADDR bd_addr) {
   tL2C_LCB* p_lcb_cur;
   int xx;
   bool no_links;
+  bt_bdaddr_t remote_bdaddr;
 
   /* See if we have a link control block for the remote device */
   p_lcb = l2cu_find_lcb_by_bd_addr(bd_addr, BT_TRANSPORT_BR_EDR);
@@ -71,6 +74,8 @@ bool l2c_link_hci_conn_req(BD_ADDR bd_addr) {
     p_lcb = l2cu_allocate_lcb(bd_addr, false, BT_TRANSPORT_BR_EDR);
     if (!p_lcb) {
       btsnd_hcic_reject_conn(bd_addr, HCI_ERR_HOST_REJECT_RESOURCES);
+      btm_remove_acl(bd_addr, BT_TRANSPORT_BR_EDR);
+      btm_acl_removed(bd_addr, BT_TRANSPORT_BR_EDR);
       L2CAP_TRACE_ERROR("L2CAP failed to allocate LCB");
       return false;
     }
@@ -95,7 +100,11 @@ bool l2c_link_hci_conn_req(BD_ADDR bd_addr) {
       else
         p_lcb->link_role = l2cu_get_conn_role(p_lcb);
     }
-
+    bdcpy(remote_bdaddr.address, bd_addr);
+    if ((p_lcb->link_role == BTM_ROLE_MASTER)&&(interop_database_match_addr(INTEROP_DISABLE_ROLE_SWITCH, (bt_bdaddr_t *)&remote_bdaddr))) {
+      p_lcb->link_role = BTM_ROLE_SLAVE;
+      L2CAP_TRACE_WARNING ("l2c_link_hci_conn_req:set link_role= %d",p_lcb->link_role);
+    }
     /* Tell the other side we accept the connection */
     btsnd_hcic_accept_conn(bd_addr, p_lcb->link_role);
 
@@ -437,6 +446,24 @@ bool l2c_link_hci_disc_comp(uint16_t handle, uint8_t reason) {
         }
 #endif
       }
+      if (p_lcb->transport == BT_TRANSPORT_BR_EDR) {
+        if (p_lcb->sent_not_acked > 0) {
+          l2cb.controller_xmit_window += p_lcb->sent_not_acked;
+          if (l2cb.controller_xmit_window > l2cb.num_lm_acl_bufs) {
+            l2cb.controller_xmit_window = l2cb.num_lm_acl_bufs;
+          }
+          p_lcb->sent_not_acked = 0;
+        }
+        p_lcb->partial_segment_being_sent = FALSE;
+
+        /* Stop the link connect timer if sent */
+        if (p_lcb->w4_info_rsp) {
+          alarm_cancel(p_lcb->l2c_lcb_timer);
+          p_lcb->w4_info_rsp = FALSE;
+        }
+
+        btm_acl_removed(p_lcb->remote_bd_addr, BT_TRANSPORT_BR_EDR);
+     }
       if (l2cu_create_conn(p_lcb, transport))
         lcb_is_free = false; /* still using this lcb */
     }
@@ -691,6 +718,12 @@ void l2c_link_adjust_allocation(void) {
          controller_xmit_quota)
     high_pri_link_quota--;
 
+    /*Adjust high pri link with min 3 buffers*/
+  if (num_hipri_links > 0) {
+    if (high_pri_link_quota < HI_PRI_LINK_QUOTA) {
+      high_pri_link_quota  = HI_PRI_LINK_QUOTA;
+    }
+  }
   /* Work out the xmit quota and buffer quota high and low priorities */
   hi_quota = num_hipri_links * high_pri_link_quota;
   low_quota =

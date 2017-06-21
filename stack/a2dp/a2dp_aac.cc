@@ -56,7 +56,8 @@ static const tA2DP_AAC_CIE a2dp_aac_src_caps = {
     // objectType
     A2DP_AAC_OBJECT_TYPE_MPEG2_LC,
     // sampleRate
-    (A2DP_AAC_SAMPLING_FREQ_44100 | A2DP_AAC_SAMPLING_FREQ_48000),
+    // TODO: AAC 48.0kHz sampling rate should be added back - see b/62301376
+    A2DP_AAC_SAMPLING_FREQ_44100,
     // channelMode
     A2DP_AAC_CHANNEL_MODE_STEREO,
     // variableBitRateSupport
@@ -714,7 +715,6 @@ A2dpCodecConfigAac::A2dpCodecConfigAac(
     btav_a2dp_codec_priority_t codec_priority)
     : A2dpCodecConfig(BTAV_A2DP_CODEC_INDEX_SOURCE_AAC, "AAC", codec_priority) {
 
-  //if (a2dp_offload_status) {
   if (A2DP_GetOffloadStatus()) {
     a2dp_aac_caps = a2dp_aac_offload_caps;
     a2dp_aac_default_config = a2dp_aac_default_offload_config;
@@ -749,6 +749,15 @@ A2dpCodecConfigAac::~A2dpCodecConfigAac() {}
 bool A2dpCodecConfigAac::init() {
   if (!isValid()) return false;
 
+  if (A2DP_GetOffloadStatus()) {
+    if (A2DP_IsCodecEnabledInOffload(BTAV_A2DP_CODEC_INDEX_SOURCE_AAC)){
+      LOG_ERROR(LOG_TAG, "%s: AAC enabled in offload mode", __func__);
+      return true;
+    } else {
+      LOG_ERROR(LOG_TAG, "%s: AAC disabled in offload mode", __func__);
+      return false;
+    }
+  }
   // Load the encoder
   if (!A2DP_LoadEncoderAac()) {
     LOG_ERROR(LOG_TAG, "%s: cannot load the encoder", __func__);

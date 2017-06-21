@@ -47,6 +47,7 @@
 #include "osi/include/osi.h"
 #include "sdp_api.h"
 #include "utl.h"
+#include "device/include/interop_config.h"
 
 #if (GAP_INCLUDED == TRUE)
 #include "gap_api.h"
@@ -561,7 +562,7 @@ static void bta_dm_disable_timer_cback(void* data) {
     bta_dm_cb.disabling = false;
 
     bta_sys_remove_uuid(UUID_SERVCLASS_PNP_INFORMATION);
-    bta_dm_cb.p_sec_cback(BTA_DM_DISABLE_EVT, NULL);
+    bta_dm_disable_conn_down_timer_cback(NULL);
   }
 }
 
@@ -648,7 +649,25 @@ void bta_dm_set_visibility(tBTA_DM_MSG* p_data) {
   if (p_data->set_visibility.pair_mode != BTA_DM_IGNORE ||
       p_data->set_visibility.conn_paired_only != BTA_DM_IGNORE)
     BTM_SetPairableMode((bool)(!(bta_dm_cb.disable_pair_mode)),
-                        bta_dm_cb.conn_paired_only);
+                          bta_dm_cb.conn_paired_only);
+}
+
+/*******************************************************************************
+**
+** Function         bta_dm_hci_raw_command
+**
+** Description      Send a HCI RAW command to the controller
+**
+**
+** Returns          void
+**
+*******************************************************************************/
+void bta_dm_hci_raw_command (tBTA_DM_MSG *p_data)
+{
+    tBTM_STATUS status;
+    APPL_TRACE_API("bta_dm_hci_raw_command");
+    status = BTM_Hci_Raw_Command(p_data->btc_command.opcode,p_data->btc_command.param_len,p_data->btc_command.p_param_buf, p_data->btc_command.p_cback);
+
 }
 
 /*******************************************************************************
@@ -692,8 +711,11 @@ void bta_dm_remove_device(tBTA_DM_MSG* p_data) {
   bdcpy(other_address, p_dev->bd_addr);
 
   /* If ACL exists for the device in the remove_bond message*/
+  bt_bdaddr_t remote_bdaddr;
+  bdcpy(remote_bdaddr.address, p_dev->bd_addr);
   bool continue_delete_dev = false;
   uint8_t other_transport = BT_TRANSPORT_INVALID;
+  interop_database_remove_addr(INTEROP_DYNAMIC_ROLE_SWITCH, (bt_bdaddr_t *)&remote_bdaddr);
 
   if (BTM_IsAclConnectionUp(p_dev->bd_addr, BT_TRANSPORT_LE) ||
       BTM_IsAclConnectionUp(p_dev->bd_addr, BT_TRANSPORT_BR_EDR)) {
@@ -739,11 +761,14 @@ void bta_dm_remove_device(tBTA_DM_MSG* p_data) {
     /* Take the link down first, and mark the device for removal when
      * disconnected */
     for (int i = 0; i < bta_dm_cb.device_list.count; i++) {
-      if (!bdcmp(bta_dm_cb.device_list.peer_device[i].peer_bdaddr,
-                 other_address)) {
+      if ((!bdcmp(bta_dm_cb.device_list.peer_device[i].peer_bdaddr, other_address))&&
+            ((other_transport && (other_transport == bta_dm_cb.device_list.peer_device[i].transport)) ||
+            !other_transport)) {
         bta_dm_cb.device_list.peer_device[i].conn_state = BTA_DM_UNPAIRING;
+        APPL_TRACE_DEBUG("%s:transport = %d ,other_transport = %d", __func__,
+                       bta_dm_cb.device_list.peer_device[i].transport, other_transport);
         btm_remove_acl(other_address,
-                       bta_dm_cb.device_list.peer_device[i].transport);
+                      bta_dm_cb.device_list.peer_device[i].transport);
         break;
       }
     }
@@ -2146,11 +2171,13 @@ static void bta_dm_discover_device(BD_ADDR remote_bd_addr) {
       /* check whether connection already exists to the device
          if connection exists, we don't have to wait for ACL
          link to go down to start search on next device */
+    if (transport == BT_TRANSPORT_BR_EDR) {
       if (BTM_IsAclConnectionUp(bta_dm_search_cb.peer_bdaddr,
                                 BT_TRANSPORT_BR_EDR))
         bta_dm_search_cb.wait_disc = false;
       else
         bta_dm_search_cb.wait_disc = true;
+    }
 
       if (bta_dm_search_cb.p_btm_inq_info) {
         APPL_TRACE_DEBUG(
@@ -2463,6 +2490,12 @@ static void bta_dm_pinname_cback(void* p_data) {
 
     /* 1 additional event data fields for this event */
     sec_event.cfm_req.just_works = bta_dm_cb.just_works;
+
+    /* retrieve the loc and rmt caps */
+    sec_event.cfm_req.loc_io_caps = bta_dm_cb.loc_io_caps;
+    sec_event.cfm_req.rmt_io_caps = bta_dm_cb.rmt_io_caps;
+    sec_event.cfm_req.loc_auth_req = bta_dm_cb.loc_auth_req;
+    sec_event.cfm_req.rmt_auth_req = bta_dm_cb.rmt_auth_req;
   } else {
     /* Retrieved saved device class and bd_addr */
     bdcpy(sec_event.pin_req.bd_addr, bta_dm_cb.pin_bd_addr);
@@ -2673,6 +2706,10 @@ static uint8_t bta_dm_sp_cback(tBTM_SP_EVT event, tBTM_SP_EVT_DATA* p_data) {
         if (p_data->cfm_req.bd_name[0] == 0) {
           bta_dm_cb.pin_evt = pin_evt;
           bdcpy(bta_dm_cb.pin_bd_addr, p_data->cfm_req.bd_addr);
+          bta_dm_cb.rmt_io_caps = sec_event.cfm_req.rmt_io_caps;
+          bta_dm_cb.loc_io_caps = sec_event.cfm_req.loc_io_caps;
+          bta_dm_cb.rmt_auth_req = sec_event.cfm_req.rmt_auth_req;
+          bta_dm_cb.loc_auth_req = sec_event.cfm_req.loc_auth_req;
           BTA_COPY_DEVICE_CLASS(bta_dm_cb.pin_dev_class,
                                 p_data->cfm_req.dev_class);
           if ((BTM_ReadRemoteDeviceName(
@@ -2698,6 +2735,9 @@ static uint8_t bta_dm_sp_cback(tBTM_SP_EVT event, tBTM_SP_EVT_DATA* p_data) {
            and initiate a name request with values from key_notif */
         if (p_data->key_notif.bd_name[0] == 0) {
           bta_dm_cb.pin_evt = pin_evt;
+          /* Store the local and remote io caps */
+          bta_dm_cb.loc_io_caps = sec_event.cfm_req.loc_io_caps;
+          bta_dm_cb.rmt_io_caps = sec_event.cfm_req.rmt_io_caps;
           bdcpy(bta_dm_cb.pin_bd_addr, p_data->key_notif.bd_addr);
           BTA_COPY_DEVICE_CLASS(bta_dm_cb.pin_dev_class,
                                 p_data->key_notif.dev_class);
@@ -3006,12 +3046,15 @@ void bta_dm_acl_change(tBTA_DM_MSG* p_data) {
 
     if (i == bta_dm_cb.device_list.count) {
       if (bta_dm_cb.device_list.count < BTA_DM_NUM_PEER_DEVICE) {
+        /* new acl connection,reset new peer device */
+        memset(&bta_dm_cb.device_list.peer_device[i], 0, sizeof(bta_dm_cb.device_list.peer_device[i]));
         bdcpy(bta_dm_cb.device_list.peer_device[bta_dm_cb.device_list.count]
                   .peer_bdaddr,
               p_bda);
         bta_dm_cb.device_list.peer_device[bta_dm_cb.device_list.count]
             .link_policy = bta_dm_cb.cur_policy;
         bta_dm_cb.device_list.count++;
+        APPL_TRACE_ERROR("%s new acl connetion:count = %d", __func__, bta_dm_cb.device_list.count);
         bta_dm_cb.device_list.peer_device[i].conn_handle =
             p_data->acl_change.handle;
         if (p_data->acl_change.transport == BT_TRANSPORT_LE)
@@ -3062,11 +3105,12 @@ void bta_dm_acl_change(tBTA_DM_MSG* p_data) {
       conn.link_down.is_removed =
           bta_dm_cb.device_list.peer_device[i].remove_dev_pending;
 
-      for (; i < bta_dm_cb.device_list.count; i++) {
+      for (; i < (bta_dm_cb.device_list.count -1); i++) {
         memcpy(&bta_dm_cb.device_list.peer_device[i],
                &bta_dm_cb.device_list.peer_device[i + 1],
                sizeof(bta_dm_cb.device_list.peer_device[i]));
       }
+      memset(&bta_dm_cb.device_list.peer_device[i], 0, sizeof(bta_dm_cb.device_list.peer_device[i]));
       break;
     }
     if (bta_dm_cb.device_list.count) bta_dm_cb.device_list.count--;
@@ -3075,7 +3119,8 @@ void bta_dm_acl_change(tBTA_DM_MSG* p_data) {
       bta_dm_cb.device_list.le_count--;
     conn.link_down.link_type = p_data->acl_change.transport;
 
-    if (bta_dm_search_cb.wait_disc &&
+    if ((p_data->acl_change.transport == BT_TRANSPORT_BR_EDR) &&
+        bta_dm_search_cb.wait_disc &&
         !bdcmp(bta_dm_search_cb.peer_bdaddr, p_bda)) {
       bta_dm_search_cb.wait_disc = false;
 

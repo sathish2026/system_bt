@@ -417,11 +417,12 @@ void btif_enable_bluetooth_evt(tBTA_STATUS status) {
     /* init rfcomm & l2cap api */
     btif_sock_init(uid_set);
 
-    /* init pan */
-    btif_pan_init();
 
     /* load did configuration */
     bte_load_did_conf(BTE_DID_CONF_FILE);
+
+    /* init pan */
+    btif_pan_init();
 
 #ifdef BTIF_DM_OOB_TEST
     btif_dm_load_local_oob();
@@ -521,6 +522,50 @@ bt_status_t btif_cleanup_bluetooth(void) {
 
   return BT_STATUS_SUCCESS;
 }
+
+/*******************************************************************************
+**
+**   BTIF Test Mode APIs
+**
+*****************************************************************************/
+#if HCI_RAW_CMD_INCLUDED == TRUE
+/*******************************************************************************
+**
+** Function         btif_hci_event_cback
+**
+** Description     Callback invoked on receiving HCI event
+**
+** Returns          None
+**
+*******************************************************************************/
+static void btif_hci_event_cback ( tBTM_RAW_CMPL *p )
+{
+  BTIF_TRACE_DEBUG("%s", __FUNCTION__);
+//  if((p != NULL) && (bt_hal_cbacks != NULL)
+//      && (bt_hal_cbacks->hci_event_recv_cb != NULL)) {
+//    HAL_CBACK(bt_hal_cbacks, hci_event_recv_cb, p->event_code, p->p_param_buf,
+//                                                                p->param_len);
+//  }
+//#endif
+}
+
+/*******************************************************************************
+**
+** Function        btif_hci_cmd_send
+**
+** Description     Sends a HCI raw command to the controller
+**
+** Returns         BT_STATUS_SUCCESS on success
+**
+*******************************************************************************/
+bt_status_t btif_hci_cmd_send(uint16_t opcode, uint8_t *buf, uint8_t len)
+{
+  BTIF_TRACE_DEBUG("%s", __FUNCTION__);
+
+  BTM_Hci_Raw_Command(opcode, len, buf, btif_hci_event_cback);
+  return BT_STATUS_SUCCESS;
+}
+#endif
 
 /*******************************************************************************
  *
