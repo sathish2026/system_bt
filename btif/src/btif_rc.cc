@@ -359,7 +359,9 @@ static int btif_max_rc_clients = 1;
  *****************************************************************************/
 extern bool btif_hf_call_terminated_recently();
 extern bool check_cod(const bt_bdaddr_t* remote_bdaddr, uint32_t cod);
-
+extern bool btif_av_is_split_a2dp_enabled();
+extern int btif_av_idx_by_bdaddr(BD_ADDR bd_addr);
+extern bool btif_av_check_flag_remote_suspend(int index);
 extern fixed_queue_t* btu_general_alarm_queue;
 
 /*****************************************************************************
@@ -1026,20 +1028,6 @@ void handle_rc_vendorunique_rsp(tBTA_AV_REMOTE_RSP* p_remote_rsp) {
   }
 }
 
-void handle_uid_changed_notification(btif_rc_device_cb_t* p_dev, uint8_t label,
-                                     tAVRC_COMMAND* pavrc_command) {
-  tAVRC_RESPONSE avrc_rsp = {0};
-  avrc_rsp.rsp.pdu = pavrc_command->pdu;
-  avrc_rsp.rsp.status = AVRC_STS_NO_ERROR;
-  avrc_rsp.rsp.opcode = pavrc_command->cmd.opcode;
-
-  avrc_rsp.reg_notif.event_id = pavrc_command->reg_notif.event_id;
-  avrc_rsp.reg_notif.param.uid_counter = 0;
-
-  send_metamsg_rsp(p_dev, -1, label, AVRC_RSP_INTERIM, &avrc_rsp);
-  send_metamsg_rsp(p_dev, -1, label, AVRC_RSP_CHANGED, &avrc_rsp);
-}
-
 /***************************************************************************
  *  Function       handle_rc_metamsg_cmd
  *
@@ -1129,11 +1117,6 @@ void handle_rc_metamsg_cmd(tBTA_AV_META_MSG* pmeta_msg) {
           pmeta_msg->code);
       p_dev->rc_notif[event_id - 1].bNotify = true;
       p_dev->rc_notif[event_id - 1].label = pmeta_msg->label;
-
-      if (event_id == AVRC_EVT_UIDS_CHANGE) {
-        handle_uid_changed_notification(p_dev, pmeta_msg->label, &avrc_command);
-        return;
-      }
     }
 
     BTIF_TRACE_EVENT("%s: Passing received metamsg command to app. pdu: %s",
@@ -2042,12 +2025,23 @@ static bt_status_t get_play_status_rsp(bt_bdaddr_t* bd_addr,
 
   BTIF_TRACE_DEBUG("%s: song len %d song pos %d", __func__, song_len, song_pos);
   CHECK_RC_CONNECTED(p_dev);
-
+  int av_index = btif_av_idx_by_bdaddr(bd_addr->address);
   memset(&(avrc_rsp.get_play_status), 0, sizeof(tAVRC_GET_PLAY_STATUS_RSP));
 
   avrc_rsp.get_play_status.song_len = song_len;
   avrc_rsp.get_play_status.song_pos = song_pos;
   avrc_rsp.get_play_status.play_status = play_status;
+  BTIF_TRACE_ERROR("%s: play_status: %d",__FUNCTION__, avrc_rsp.get_play_status.play_status);
+  if ((avrc_rsp.get_play_status.play_status == BTRC_PLAYSTATE_PLAYING) &&
+       (btif_av_check_flag_remote_suspend(av_index)))
+  {
+      BTIF_TRACE_ERROR("%s: clear remote suspend flag: %d",__FUNCTION__, av_index);
+      btif_av_clear_remote_suspend_flag();
+      if (btif_av_is_split_a2dp_enabled())
+      {
+          btif_dispatch_sm_event(BTIF_AV_START_STREAM_REQ_EVT, NULL, 0);
+      }
+  }
 
   avrc_rsp.get_play_status.pdu = AVRC_PDU_GET_PLAY_STATUS;
   avrc_rsp.get_play_status.opcode = opcode_from_pdu(AVRC_PDU_GET_PLAY_STATUS);
@@ -2313,12 +2307,23 @@ static bt_status_t register_notification_rsp(
     BTIF_TRACE_DEBUG(
         "%s: Avrcp Event id is registered: event_id: %x handle: 0x%x", __func__,
         event_id, btif_rc_cb.rc_multi_cb[idx].rc_handle);
+    int av_index = btif_av_idx_by_bdaddr(bd_addr->address);
 
     switch (event_id) {
       case BTRC_EVT_PLAY_STATUS_CHANGED:
         avrc_rsp.reg_notif.param.play_status = p_param->play_status;
-        if (avrc_rsp.reg_notif.param.play_status == PLAY_STATUS_PLAYING)
-          btif_av_clear_remote_suspend_flag();
+        BTIF_TRACE_ERROR("%s: play_status: %d",__FUNCTION__,
+                              avrc_rsp.reg_notif.param.play_status);
+        if ((avrc_rsp.reg_notif.param.play_status == PLAY_STATUS_PLAYING) &&
+            (btif_av_check_flag_remote_suspend(av_index)))
+        {
+            BTIF_TRACE_ERROR("%s: clear remote suspend flag: %d",__FUNCTION__,av_index );
+            btif_av_clear_remote_suspend_flag();
+            if (btif_av_is_split_a2dp_enabled())
+            {
+                btif_dispatch_sm_event(BTIF_AV_START_STREAM_REQ_EVT, NULL, 0);
+            }
+        }
         break;
       case BTRC_EVT_TRACK_CHANGE:
         memcpy(&(avrc_rsp.reg_notif.param.track), &(p_param->track),
