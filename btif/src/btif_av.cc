@@ -36,7 +36,9 @@
 #include "bta_api.h"
 #include "btif_storage.h"
 #include "btif_a2dp.h"
+#ifdef ENABLE_SPLIT_A2DP
 #include "btif_a2dp_audio_interface.h"
+#endif /* ENABLE_SPLIT_A2DP */
 #include "btif_a2dp_control.h"
 #include "btif_a2dp_sink.h"
 #include "btif_av_co.h"
@@ -154,11 +156,13 @@ static alarm_t *av_coll_detected_timer = NULL;
 static bool isA2dpSink = false;
 
 /*SPLITA2DP */
+#ifdef ENABLE_SPLIT_A2DP
 bool bt_split_a2dp_enabled = false;
 bool reconfig_a2dp = false;
 bool btif_a2dp_audio_if_init = false;
 bool codec_cfg_change = false;
 extern bool enc_update_in_progress;
+#endif /* ENABLE_SPLIT_A2DP */
 /*SPLITA2DP */
 /* both interface and media task needs to be ready to alloc incoming request */
 #define CHECK_BTAV_INIT()                                                    \
@@ -198,11 +202,12 @@ static void btif_av_update_current_playing_device(int index);
 static void btif_av_check_rc_connection_priority(void *p_data);
 static BD_ADDR bd_null= {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 static bt_status_t connect_int(bt_bdaddr_t* bd_addr, uint16_t uuid);
+#ifdef ENABLE_SPLIT_A2DP
 static bool btif_av_allow_codec_config_change(btav_a2dp_codec_index_t codec_type,
                                         btav_a2dp_codec_sample_rate_t sample_rate);
 int btif_get_is_remote_started_idx();
 static void btif_av_reset_remote_started_flag();
-
+#endif /* ENABLE_SPLIT_A2DP */
 #ifdef AVK_BACKPORT
 void btif_av_request_audio_focus(bool enable);
 #endif
@@ -244,13 +249,16 @@ bool btif_av_get_ongoing_multicast();
 tBTA_AV_HNDL btif_av_get_playing_device_hdl();
 tBTA_AV_HNDL btif_av_get_av_hdl_from_idx(int idx);
 int btif_av_get_other_connected_idx(int current_index);
+#ifdef ENABLE_SPLIT_A2DP
 void btif_av_reset_reconfig_flag();
+#endif /* ENABLE_SPLIT_A2DP */
 bool btif_av_is_device_disconnecting();
 tBTA_AV_HNDL btif_av_get_reconfig_dev_hndl();
 void btif_av_reset_codec_reconfig_flag();
+#ifdef ENABLE_SPLIT_A2DP
 void btif_av_reinit_audio_interface();
 bool btif_av_is_suspend_stop_pending_ack();
-
+#endif /* ENABLE_SPLIT_A2DP */
 const char* dump_av_sm_state_name(btif_av_state_t state) {
   switch (state) {
     CASE_RETURN_STR(BTIF_AV_STATE_IDLE)
@@ -586,12 +594,14 @@ static bool btif_av_state_idle_handler(btif_sm_event_t event, void* p_data, int 
         BTIF_TRACE_EVENT("reset A2dp states in IDLE ");
         btif_av_update_current_playing_device(index);
       }
+#ifdef ENABLE_SPLIT_A2DP
       if (!btif_av_is_playing_on_other_idx(index) &&
            btif_av_is_split_a2dp_enabled()) {
         BTIF_TRACE_EVENT("reset Vendor flag A2DP state is IDLE");
         reconfig_a2dp = FALSE;
         btif_media_send_reset_vendor_state();
       }
+#endif /* ENABLE_SPLIT_A2DP */
       break;
 
     case BTIF_SM_EXIT_EVT:
@@ -854,6 +864,7 @@ static bool btif_av_state_opening_handler(btif_sm_event_t event, void* p_data,
         state = BTAV_CONNECTION_STATE_CONNECTED;
         av_state = BTIF_AV_STATE_OPENED;
 /* SPLITA2DP */
+#ifdef ENABLE_SPLIT_A2DP
         if (btif_a2dp_audio_if_init != true) {
           if (btif_av_is_split_a2dp_enabled()) {
             BTIF_TRACE_DEBUG("Split a2dp enabled:initialize interface ");
@@ -865,6 +876,7 @@ static bool btif_av_state_opening_handler(btif_sm_event_t event, void* p_data,
         } else {
           BTIF_TRACE_DEBUG("audio interface is already initialized");
         }
+#endif /* ENABLE_SPLIT_A2DP */
 /* SPLITA2DP */
         btif_av_cb[index].edr = p_bta_data->open.edr;
         if (p_bta_data->open.role == HOST_ROLE_SLAVE)
@@ -1362,6 +1374,7 @@ static bool btif_av_state_opened_handler(btif_sm_event_t event, void* p_data,
       }
 
       btif_report_source_codec_state(p_data, bt_addr);
+#ifdef ENABLE_SPLIT_A2DP
       if (btif_av_is_split_a2dp_enabled()) {
         if (codec_cfg_change) {
           codec_cfg_change = false;
@@ -1370,6 +1383,7 @@ static bool btif_av_state_opened_handler(btif_sm_event_t event, void* p_data,
                                        &(btif_av_cb[index].peer_bda));
         }
       }
+#endif /* ENABLE_SPLIT_A2DP */
     } break;
 
     case BTIF_AV_DISCONNECT_REQ_EVT: {
@@ -1379,12 +1393,14 @@ static bool btif_av_state_opened_handler(btif_sm_event_t event, void* p_data,
       }
 
 /* SPLITA2DP */
+#ifdef ENABLE_SPLIT_A2DP
       if (!btif_av_is_connected_on_other_idx(index)) {
         if (btif_av_is_split_a2dp_enabled()) {
           btif_a2dp_audio_if_init = false;
           btif_a2dp_audio_interface_deinit();
         }
       }
+#endif /* ENABLE_SPLIT_A2DP */
 /* SPLITA2DP */
       /* inform the application that we are disconnecting */
       btif_report_connection_state(BTAV_CONNECTION_STATE_DISCONNECTING,
@@ -1426,12 +1442,14 @@ static bool btif_av_state_opened_handler(btif_sm_event_t event, void* p_data,
       } else {
         APPL_TRACE_WARNING("Stop the AV Data channel");
 /* SPLITA2DP */
+#ifdef ENABLE_SPLIT_A2DP
         if (btif_av_is_split_a2dp_enabled()) {
           if (btif_a2dp_audio_if_init) {
             btif_a2dp_audio_if_init = false;
             btif_a2dp_audio_interface_deinit();
           }
         }
+#endif /* ENABLE_SPLIT_A2DP */
 /* SPLITA2DP */
         btif_a2dp_on_stopped(NULL);
       }
@@ -1579,6 +1597,7 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
 #endif
       // Clear Dual Handoff for all SCBs. If split a2dp is enabled, clear dual handoff
       // flag in offload resp evt.
+#ifdef ENABLE_SPLIT_A2DP
       if (!btif_av_is_split_a2dp_enabled()) {
         for(i = 0; i < btif_max_av_clients; i++) {
           btif_av_cb[i].dual_handoff = false;
@@ -1589,6 +1608,7 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
         // This is latest device to play now
         btif_av_cb[index].current_playing = true;
       }
+#endif /* ENABLE_SPLIT_A2DP */
       break;
 
     case BTIF_SM_EXIT_EVT:
@@ -1638,6 +1658,7 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
 
 
       btif_report_source_codec_state(p_data, bt_addr);
+#ifdef ENABLE_SPLIT_A2DP
       if (btif_av_is_split_a2dp_enabled()) {
         if (codec_cfg_change) {
           codec_cfg_change = false;
@@ -1646,6 +1667,7 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
                                           &(btif_av_cb[index].peer_bda));
         }
       }
+#endif /* ENABLE_SPLIT_A2DP */
       break;
 
     /* fixme -- use suspend = true always to work around issue with BTA AV */
@@ -1694,6 +1716,7 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
       if (btif_av_cb[index].peer_sep == AVDT_TSEP_SRC)
           BTA_AvCloseRc(btif_av_cb[index].bta_handle);
 
+#ifdef ENABLE_SPLIT_A2DP
       if (btif_av_is_split_a2dp_enabled() &&
         btif_av_is_connected_on_other_idx(index)) {
         /*Fake handoff state to switch streaming to other coddeced
@@ -1705,11 +1728,13 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
           btif_a2dp_audio_interface_deinit();
         }
       }
+#endif /* ENABLE_SPLIT_A2DP */
       // inform the application that we are disconnecting
       btif_report_connection_state(BTAV_CONNECTION_STATE_DISCONNECTING, &(btif_av_cb[index].peer_bda));
 
       // wait in closing state until fully closed
       btif_sm_change_state(btif_av_cb[index].sm_handle, BTIF_AV_STATE_CLOSING);
+#ifdef ENABLE_SPLIT_A2DP
       if (btif_av_cb[index].dual_handoff == true) {
         BTIF_TRACE_DEBUG("%s: Notify framework to reconfig",__func__);
         int idx = btif_av_get_other_connected_idx(index);
@@ -1721,6 +1746,7 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
                                           &(btif_av_cb[idx].peer_bda));
           }
       }
+#endif /* ENABLE_SPLIT_A2DP */
       break;
 
     case BTA_AV_SUSPEND_EVT:
@@ -1847,6 +1873,7 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
       if (p_av->suspend.status == BTA_AV_SUCCESS)
         btif_sm_change_state(btif_av_cb[index].sm_handle, BTIF_AV_STATE_OPENED);
 
+#ifdef ENABLE_SPLIT_A2DP
       if (btif_av_is_split_a2dp_enabled() &&
         btif_av_is_connected_on_other_idx(index) && !reconfig_a2dp) {
         /*Fake handoff state to switch streaming to other coddeced
@@ -1862,18 +1889,21 @@ static bool btif_av_state_started_handler(btif_sm_event_t event, void* p_data,
                                           &(btif_av_cb[idx].peer_bda));
         }
       }
+#endif /* ENABLE_SPLIT_A2DP */
       break;
 
     case BTA_AV_CLOSE_EVT:
       btif_av_cb[index].flags |= BTIF_AV_FLAG_PENDING_STOP;
 
 /* SPLITA2DP */
+#ifdef ENABLE_SPLIT_A2DP
       if (!btif_av_is_connected_on_other_idx(index)) {
         if (btif_av_is_split_a2dp_enabled()) {
           btif_a2dp_audio_if_init = false;
           btif_a2dp_audio_interface_deinit();
         }
       }
+#endif /* ENABLE_SPLIT_A2DP */
 /* SPLITA2DP */
       /* avdtp link is closed */
       btif_a2dp_on_stopped(NULL);
@@ -1957,10 +1987,12 @@ static void btif_av_handle_event(uint16_t event, char* p_param) {
     case BTIF_AV_CLEANUP_REQ_EVT: // Clean up to be called on default index
       BTIF_TRACE_DEBUG("%s: BTIF_AV_CLEANUP_REQ_EVT", __func__);
       uuid = (int)*p_param;
+#ifdef ENABLE_SPLIT_A2DP
       if (btif_a2dp_audio_if_init) {
         btif_a2dp_audio_if_init = false;
         btif_a2dp_audio_interface_deinit();
       }
+#endif /* ENABLE_SPLIT_A2DP */
       if (uuid == BTA_A2DP_SOURCE_SERVICE_ID) {
         if (bt_av_src_callbacks) {
           bt_av_src_callbacks = NULL;
@@ -2036,6 +2068,7 @@ static void btif_av_handle_event(uint16_t event, char* p_param) {
         index = HANDLE_TO_INDEX(hdl);
       }
       break;
+#ifdef ENABLE_SPLIT_A2DP
     case BTIF_AV_REINIT_AUDIO_IF:
       btif_av_reinit_audio_interface();
       return;
@@ -2066,6 +2099,7 @@ static void btif_av_handle_event(uint16_t event, char* p_param) {
     case BTIF_AV_RESET_REMOTE_STARTED_FLAG_EVT:
       btif_av_reset_remote_started_flag();
       return;
+#endif /* ENABLE_SPLIT_A2DP */
       // Events from the stack, BTA
     case BTA_AV_ENABLE_EVT:
       index = 0;
@@ -2658,18 +2692,24 @@ static bt_status_t init_src(
     int max_a2dp_connections, int a2dp_multicast_state) {
   bt_status_t status = BT_STATUS_FAIL;
   BTIF_TRACE_EVENT("%s() with max conn = %d", __func__, max_a2dp_connections);
+#ifdef ENABLE_SPLIT_A2DP
   char value[PROPERTY_VALUE_MAX] = {'\0'};
 
   osi_property_get("persist.vendor.bt.enable.splita2dp", value, "true");
   BTIF_TRACE_ERROR("split_a2dp_status = %s",value);
   bt_split_a2dp_enabled = (strcmp(value, "true") == 0);
   BTIF_TRACE_ERROR("split_a2dp_status = %d",bt_split_a2dp_enabled);
+#endif /* ENABLE_SPLIT_A2DP */
 
   if (bt_av_sink_callbacks != NULL)
         // already did btif_av_init()
         status = BT_STATUS_SUCCESS;
   else {
+#ifdef ENABLE_SPLIT_A2DP
     if (a2dp_multicast_state && !bt_split_a2dp_enabled)
+#else /* ENABLE_SPLIT_A2DP */
+    if (a2dp_multicast_state)
+#endif /* ENABLE_SPLIT_A2DP */
       is_multicast_supported = true;
     btif_max_av_clients = max_a2dp_connections;
     for (int i = 0; i < btif_max_av_clients; i++)
@@ -2781,6 +2821,11 @@ bool btif_av_is_device_connected(BD_ADDR address) {
 void btif_av_trigger_dual_handoff(bool handoff, BD_ADDR address) {
   int index, next_idx, other_idx;
   btif_sm_state_t state = BTIF_AV_STATE_IDLE;
+#ifdef ENABLE_SPLIT_A2DP
+  int index,next_idx;
+#else /* ENABLE_SPLIT_A2DP */
+  int index;
+#endif /* ENABLE_SPLIT_A2DP */
   BTIF_TRACE_DEBUG("%s()", __func__);
 
   /* Get the current playing device */
@@ -2812,6 +2857,7 @@ void btif_av_trigger_dual_handoff(bool handoff, BD_ADDR address) {
   } else
     BTIF_TRACE_ERROR("Handoff on invalid index");
 
+#ifdef ENABLE_SPLIT_A2DP
   if (btif_av_is_split_a2dp_enabled()) {
     next_idx = btif_av_get_other_connected_idx(index);
     /* Fix for below Klockwork Issue
@@ -2822,6 +2868,7 @@ void btif_av_trigger_dual_handoff(bool handoff, BD_ADDR address) {
                               &(btif_av_cb[next_idx].peer_bda));
     }
   }
+#endif /* ENABLE_SPLIT_A2DP */
 }
 
 /*******************************************************************************
@@ -2944,6 +2991,7 @@ static bt_status_t codec_config_src(
         cp.bits_per_sample, cp.channel_mode, cp.codec_specific_1,
         cp.codec_specific_2, cp.codec_specific_3, cp.codec_specific_4);
 
+#ifdef ENABLE_SPLIT_A2DP
         if (btif_av_is_split_a2dp_enabled()) {
           if (!btif_av_allow_codec_config_change(cp.codec_type,cp.sample_rate)) {
             int idx;
@@ -2960,6 +3008,7 @@ static bt_status_t codec_config_src(
           else
             codec_cfg_change = true;
         }
+#endif /* ENABLE_SPLIT_A2DP */
     btif_transfer_context(btif_av_handle_event, BTIF_AV_SOURCE_CONFIG_REQ_EVT,
                           reinterpret_cast<char*>(&cp), sizeof(cp), NULL);
   }
@@ -3929,10 +3978,12 @@ bool btif_av_check_flag_remote_suspend(int index) {
  * Returns          TRUE if split a2dp is enabled, FALSE otherwise
  *
  ******************************************************************************/
+#ifdef ENABLE_SPLIT_A2DP
 bool btif_av_is_split_a2dp_enabled() {
   BTIF_TRACE_DEBUG("btif_av_is_split_a2dp_enabled:%d",bt_split_a2dp_enabled);
   return bt_split_a2dp_enabled;
 }
+#endif /* ENABLE_SPLIT_A2DP */
 /******************************************************************************
 **
 ** Function         btif_av_is_under_handoff
@@ -3976,6 +4027,7 @@ bool btif_av_is_device_disconnecting() {
   }
   return false;
 }
+#ifdef ENABLE_SPLIT_A2DP
 void btif_av_reset_reconfig_flag() {
   int i;
   BTIF_TRACE_DEBUG("%s",__func__);
@@ -4004,6 +4056,7 @@ bool btif_av_allow_codec_config_change(btav_a2dp_codec_index_t codec_type,
   }
   return true;
 }
+#endif /* ENABLE_SPLIT_A2DP */
 
 /******************************************************************************
 **
@@ -4051,8 +4104,10 @@ void btif_av_reset_codec_reconfig_flag() {
 **
 ** Returns         void
 ********************************************************************************/
+#ifdef ENABLE_SPLIT_A2DP
 void btif_av_reinit_audio_interface() {
   BTIF_TRACE_DEBUG(LOG_TAG,"btif_av_reint_audio_interface");
   btif_a2dp_audio_interface_init();
 }
+#endif /* ENABLE_SPLIT_A2DP */
 /*SPLITA2DP*/

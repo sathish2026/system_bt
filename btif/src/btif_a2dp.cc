@@ -35,12 +35,16 @@
 #include "btif_av.h"
 #include "btif_util.h"
 #include "osi/include/log.h"
+#ifdef ENABLE_SPLIT_A2DP
 #include "btif_a2dp_audio_interface.h"
+#endif /* ENABLE_SPLIT_A2DP */
 #include "btif_hf.h"
 
+#ifdef ENABLE_SPLIT_A2DP
 extern bool btif_a2dp_audio_if_init;
 extern tBTIF_A2DP_SOURCE_VSC btif_a2dp_src_vsc;
 extern void btif_av_reset_reconfig_flag();
+#endif /* ENABLE_SPLIT_A2DP */
 
 void btif_a2dp_on_idle(int index) {
   APPL_TRACE_EVENT("## ON A2DP IDLE ## peer_sep = %d", btif_av_get_peer_sep(index));
@@ -60,6 +64,7 @@ bool btif_a2dp_on_started(tBTA_AV_START* p_av_start, bool pending_start,
 
   if (p_av_start == NULL) {
     /* ack back a local start request */
+#ifdef ENABLE_SPLIT_A2DP
     if (btif_av_is_split_a2dp_enabled()) {
       if (btif_hf_is_call_vr_idle())
         //btif_dispatch_sm_event(BTIF_AV_OFFLOAD_START_REQ_EVT, NULL, 0);
@@ -74,18 +79,26 @@ bool btif_a2dp_on_started(tBTA_AV_START* p_av_start, bool pending_start,
         btif_a2dp_command_ack(A2DP_CTRL_ACK_SUCCESS);
       return true;
     }
+#else /* ENABLE_SPLIT_A2DP */
+  btif_a2dp_command_ack(A2DP_CTRL_ACK_SUCCESS);
+  return true;
+#endif /* ENABLE_SPLIT_A2DP */
   }
 
   if (p_av_start->status == BTA_AV_SUCCESS) {
     if (!p_av_start->suspending) {
       if (p_av_start->initiator) {
         if (pending_start) {
+#ifdef ENABLE_SPLIT_A2DP
           if (btif_av_is_split_a2dp_enabled()) {
             btif_dispatch_sm_event(BTIF_AV_OFFLOAD_START_REQ_EVT, NULL, 0);
           } else {
             if (pending_cmd == A2DP_CTRL_CMD_START)
               btif_a2dp_command_ack(A2DP_CTRL_ACK_SUCCESS);
           }
+#else /* ENABLE_SPLIT_A2DP */
+          btif_a2dp_command_ack(A2DP_CTRL_ACK_SUCCESS);
+#endif /* ENABLE_SPLIT_A2DP */
           ack = true;
         }
       } else {
@@ -93,9 +106,11 @@ bool btif_a2dp_on_started(tBTA_AV_START* p_av_start, bool pending_start,
          * is setup before datapath is started.
          */
          btif_a2dp_source_setup_codec(hdl);
+#ifdef ENABLE_SPLIT_A2DP
          if (btif_av_is_split_a2dp_enabled()) {
            APPL_TRACE_IMP("Do not Initiate VSC exchange on remote start");
          }
+#endif /* ENABLE_SPLIT_A2DP */
          ack = true;
       }
 
@@ -119,6 +134,7 @@ void btif_a2dp_on_stopped(tBTA_AV_SUSPEND* p_av_suspend) {
     btif_a2dp_sink_on_stopped(p_av_suspend);
     return;
   }
+#ifdef ENABLE_SPLIT_A2DP
   if (!btif_av_is_split_a2dp_enabled()) {
     btif_a2dp_source_on_stopped(p_av_suspend);
   } else { //TODO send command to btif_a2dp_audio_interface
@@ -129,10 +145,12 @@ void btif_a2dp_on_stopped(tBTA_AV_SUSPEND* p_av_suspend) {
     else
         APPL_TRACE_EVENT("btif_a2dp_on_stopped, audio interface not up");
   }
+#endif /* ENABLE_SPLIT_A2DP */
 }
 
 void btif_a2dp_on_suspended(tBTA_AV_SUSPEND* p_av_suspend) {
   APPL_TRACE_EVENT("## ON A2DP SUSPENDED ##");
+#ifdef ENABLE_SPLIT_A2DP
   int idx = btif_av_get_latest_playing_device_idx();
   if (!btif_av_is_split_a2dp_enabled()) {
     if (btif_av_get_peer_sep(idx) == AVDT_TSEP_SRC) {
@@ -144,6 +162,7 @@ void btif_a2dp_on_suspended(tBTA_AV_SUSPEND* p_av_suspend) {
      if (p_av_suspend != NULL)
        btif_a2dp_audio_on_suspended(p_av_suspend->status);
   }
+#endif /* ENABLE_SPLIT_A2DP */
 }
 
 void btif_a2dp_on_offload_started(tBTA_AV_STATUS status) {
@@ -167,6 +186,7 @@ void btif_a2dp_on_offload_started(tBTA_AV_STATUS status) {
       ack = A2DP_CTRL_ACK_FAILURE;
       break;
   }
+#ifdef ENABLE_SPLIT_A2DP
   if (btif_av_is_split_a2dp_enabled()) {
     btif_av_reset_reconfig_flag();
     btif_a2dp_audio_on_started(status);
@@ -185,6 +205,9 @@ void btif_a2dp_on_offload_started(tBTA_AV_STATUS status) {
   } else {
     btif_a2dp_command_ack(ack);
   }
+#else /* ENABLE_SPLIT_A2DP */
+  btif_a2dp_command_ack(ack);
+#endif /* ENABLE_SPLIT_A2DP */
 }
 
 void btif_a2dp_honor_remote_start() {

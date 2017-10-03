@@ -153,7 +153,9 @@ static bool bta_av_co_set_codec_ota_config(tBTA_AV_CO_PEER* p_peer,
 extern int btif_max_av_clients;
 extern tBTA_AV_HNDL btif_av_get_reconfig_dev_hndl();
 extern void btif_av_reset_codec_reconfig_flag();
+#ifdef ENABLE_SPLIT_A2DP
 extern bool bt_split_a2dp_enabled;
+#endif /* ENABLE_SPLIT_A2DP */
 /*******************************************************************************
  **
  ** Function         bta_av_co_cp_get_flag
@@ -907,6 +909,7 @@ static tBTA_AV_CO_SINK* bta_av_co_audio_set_codec(tBTA_AV_CO_PEER* p_peer) {
   // Select the codec
   for (const auto& iter : bta_av_co_cb.codecs->orderedSourceCodecs()) {
     APPL_TRACE_DEBUG("%s: trying codec %s", __func__, iter->name().c_str());
+#ifdef ENABLE_SPLIT_A2DP
     if (bt_split_a2dp_enabled && (!strcmp(iter->name().c_str(),"AAC")) && (interop_match_addr(INTEROP_DISABLE_AAC_CODEC, &bt_addr)))
     {
       APPL_TRACE_DEBUG("AAC is not supported for this remote device");
@@ -915,6 +918,9 @@ static tBTA_AV_CO_SINK* bta_av_co_audio_set_codec(tBTA_AV_CO_PEER* p_peer) {
     {
      p_sink = bta_av_co_audio_codec_selected(*iter, p_peer);
     }
+#else /* ENABLE_SPLIT_A2DP */
+    p_sink = bta_av_co_audio_codec_selected(*iter, p_peer);
+#endif /* ENABLE_SPLIT_A2DP */
     if (p_sink != NULL) {
       APPL_TRACE_DEBUG("%s: selected codec %s", __func__, iter->name().c_str());
       break;
@@ -1367,7 +1373,9 @@ bt_status_t bta_av_set_a2dp_current_codec(tBTA_AV_HNDL hndl) {
 void bta_av_co_init(
     const std::vector<btav_a2dp_codec_config_t>& codec_priorities) {
   APPL_TRACE_DEBUG("%s", __func__);
+#ifdef ENABLE_SPLIT_A2DP
   char value[PROPERTY_VALUE_MAX] = {'\0'};
+#endif /* ENABLE_SPLIT_A2DP */
   /* Reset the control block */
   bta_av_co_cb.reset();
 
@@ -1382,16 +1390,20 @@ void bta_av_co_init(
   mutex_global_lock();
   bta_av_co_cb.codecs = new A2dpCodecs(codec_priorities);
 /* SPLITA2DP */
+#ifdef ENABLE_SPLIT_A2DP
   bool a2dp_offload = btif_av_is_split_a2dp_enabled();
   osi_property_get("persist.vendor.bt.a2dp_offload_cap", value, "false");
   A2DP_SetOffloadStatus(a2dp_offload, value);
+#endif /* ENABLE_SPLIT_A2DP */
 /* SPLITA2DP */
   bool isMcastSupported = btif_av_is_multicast_supported();
   bool isShoSupported = (btif_max_av_clients > 1) ? true : false;
+#ifdef ENABLE_SPLIT_A2DP
   if (a2dp_offload) {
     isMcastSupported = false;
     isShoSupported = false;
   }
+#endif /* ENABLE_SPLIT_A2DP */
   bta_av_co_cb.codecs->init(isMcastSupported, isShoSupported);
   A2DP_InitDefaultCodec(bta_av_co_cb.codec_config);
   mutex_global_unlock();
