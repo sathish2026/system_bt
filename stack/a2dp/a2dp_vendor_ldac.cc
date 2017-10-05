@@ -341,7 +341,7 @@ int A2DP_VendorGetTrackBitsPerSampleLdac(const uint8_t* p_codec_info) {
     return -1;
   }
 
-  switch (a2dp_ldac_caps.bits_per_sample) {
+  switch (ldac_cie.bits_per_sample) {
     case BTAV_A2DP_CODEC_BITS_PER_SAMPLE_16:
       return 16;
     case BTAV_A2DP_CODEC_BITS_PER_SAMPLE_24:
